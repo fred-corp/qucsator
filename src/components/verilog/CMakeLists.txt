@@ -57,6 +57,26 @@ foreach(script ${XML_BUILD})
   set(XML_CMD ${XML_CMD} -e ${CMAKE_CURRENT_SOURCE_DIR}/${script})
 endforeach()
 
+# admsXml writes an implicit transform script (.adms.implicit.xml) into
+# its working directory on each run.  Running multiple admsXml
+# invocations in parallel from the same build directory races on that
+# file and corrupts it.  Generate the script once at configure time
+# and pass it to admsXml through the adms_implicit_transforms shell
+# variable, which makes admsXml read the script instead of writing it.
+set(ADMS_IMPLICIT_XML ${CMAKE_CURRENT_BINARY_DIR}/adms.implicit.xml)
+if(NOT EXISTS ${ADMS_IMPLICIT_XML})
+  execute_process(
+    COMMAND ${ADMSXML}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    OUTPUT_QUIET ERROR_QUIET)
+endif()
+if(EXISTS ${ADMS_IMPLICIT_XML})
+  set(ADMS_ENV ${CMAKE_COMMAND} -E env
+      adms_implicit_transforms=${ADMS_IMPLICIT_XML})
+else()
+  set(ADMS_ENV)
+endif()
+
 # Process each Verilog-A file.
 set(gen_SRC)
 foreach(file ${VA_FILES})
@@ -71,8 +91,8 @@ foreach(file ${VA_FILES})
   # custom command/rule to generate outputs with admsXml
   add_custom_command(
     OUTPUT ${output}
-    COMMAND ${ADMSXML} ${CMAKE_CURRENT_SOURCE_DIR}/${file} ${XML_CMD} -o
-            ${_name}
+    COMMAND ${ADMS_ENV} ${ADMSXML} ${CMAKE_CURRENT_SOURCE_DIR}/${file}
+            ${XML_CMD} -o ${_name}
     DEPENDS ${file} ${XML_BUILD})
   list(APPEND gen_SRC ${_name}.cpp)
 endforeach()
