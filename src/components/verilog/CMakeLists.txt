@@ -63,8 +63,9 @@ endforeach()
 # file and corrupts it.  Generate the script once at configure time
 # and pass it to admsXml through the adms_implicit_transforms shell
 # variable, which makes admsXml read the script instead of writing it.
-set(ADMS_IMPLICIT_XML ${CMAKE_CURRENT_BINARY_DIR}/adms.implicit.xml)
+set(ADMS_IMPLICIT_XML ${CMAKE_CURRENT_BINARY_DIR}/.adms.implicit.xml)
 if(NOT EXISTS ${ADMS_IMPLICIT_XML})
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   execute_process(
     COMMAND ${ADMSXML}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
@@ -74,7 +75,9 @@ if(EXISTS ${ADMS_IMPLICIT_XML})
   set(ADMS_ENV ${CMAKE_COMMAND} -E env
       adms_implicit_transforms=${ADMS_IMPLICIT_XML})
 else()
-  set(ADMS_ENV)
+  message(FATAL_ERROR
+    "${ADMS_IMPLICIT_XML} could not be generated with ${ADMSXML}; "
+    "parallel admsXml runs would race on the implicit transform script")
 endif()
 
 # Process each Verilog-A file.

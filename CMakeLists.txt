@@ -32,6 +32,13 @@
 cmake_minimum_required(VERSION 3.5)
 project(qucs-core CXX)
 
+# keep char signed on platforms where the compiler defaults to
+# unsigned char (e.g. Linux on ARM), matching the behavior on the
+# other platforms
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-fsigned-char)
+endif()
+
 
 # otherwise qucsator cannot generate qucsdefs.h
 add_definitions(-DDEBUG)

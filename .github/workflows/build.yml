@@ -54,6 +54,7 @@ jobs:
           # drop the CMP0048 OLD policy block (rejected by CMake >= 4)
           perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
+                -DCMAKE_C_FLAGS=-fsigned-char \
                 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build build --parallel
           cmake --install build
@@ -78,7 +79,7 @@ jobs:
           printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="49+j24" Num=1\nR:R1 a gnd R=50\n.SP:SP1 Type="lin" Start=1e9 Stop=1.1e9 Points=2\n' > complex_sp.txt
           build/src/qucsator -i complex_sp.txt -o complex_sp.dat
           # expected power-wave S[1,1] for Z0=49+j24, load 50 Ohm
-          grep -q '+6.50477016478749892059e-02+j2.26655102630818172660e-01' complex_sp.dat
+          python3 contrib/ci/check_s11.py complex_sp.dat
 
       - name: Smoke test (conjugate matched complex source)
         run: |
