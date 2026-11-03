@@ -29,13 +29,8 @@
 
 # ~~~
 
+cmake_minimum_required(VERSION 3.5)
 project(qucs-core CXX)
-cmake_minimum_required(VERSION 2.6)
-
-# ignore the project() managed VERSION (new in CMake 3.0)
-if(POLICY CMP0048)
-  cmake_policy(SET CMP0048 OLD)
-endif(POLICY CMP0048)
 
 
 # otherwise qucsator cannot generate qucsdefs.h

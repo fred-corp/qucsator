@@ -1,0 +1,85 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+          - name: macos-arm64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bison flex gperf libxml-libxml-perl
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bison flex gperf cpanminus
+          cpanm --local-lib="$HOME/perl5" XML::LibXML
+
+      - name: Build ADMS (admsXml)
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+            echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+            echo "PERL5LIB=$HOME/perl5/lib/perl5" >> "$GITHUB_ENV"
+          fi
+          git clone --depth 1 https://github.com/Qucs/ADMS.git
+          cd ADMS
+          # compatibility with recent bison (%name-prefix requires '=') and CMake
+          perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
+          perl -pi -e 's/^\s*cmake_policy\(SET CMP0048 OLD\)\s*$//' CMakeLists.txt
+          perl -pi -e 's/^\s*(if|endif)\(POLICY CMP0048\)\s*$//' CMakeLists.txt
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build build --parallel
+          cmake --install build
+          test -x "$HOME/adms/bin/admsXml"
+          echo "$HOME/adms/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build qucsator
+        run: |
+          EXTRA_ARGS=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # the bison/flex lookups in CMakeLists.txt search fixed paths
+            # only, so Homebrew's tools must be passed explicitly
+            EXTRA_ARGS="-DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison \
+                        -DFLEX_EXECUTABLE=$(brew --prefix flex)/bin/flex"
+          fi
+          # shellcheck disable=SC2086
+          cmake -B build -DCMAKE_BUILD_TYPE=Release $EXTRA_ARGS
+          cmake --build build --parallel
+
+      - name: Smoke test (complex impedance power source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="49+j24" Num=1\nR:R1 a gnd R=50\n.SP:SP1 Type="lin" Start=1e9 Stop=1.1e9 Points=2\n' > complex_sp.txt
+          build/src/qucsator -i complex_sp.txt -o complex_sp.dat
+          grep -q 'j2.31280716970222621764e-01' complex_sp.dat
+
+      - name: Run basic netlist tests
+        run: |
+          for f in $(find tests/basic -name '*.net' ! -path '*spfile*'); do
+            echo "== $f"
+            build/src/qucsator -i "$f" -o /tmp/qucsator-test.dat
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qucsator-${{ matrix.name }}
+          path: build/src/qucsator
