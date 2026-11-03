@@ -44,8 +44,8 @@ jobs:
           cd ADMS
           # compatibility with recent bison (%name-prefix requires '=') and CMake
           perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
-          perl -pi -e 's/^\s*cmake_policy\(SET CMP0048 OLD\)\s*$//' CMakeLists.txt
-          perl -pi -e 's/^\s*(if|endif)\(POLICY CMP0048\)\s*$//' CMakeLists.txt
+          # drop the CMP0048 OLD policy block (rejected by CMake >= 4)
+          perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
                 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build build --parallel
