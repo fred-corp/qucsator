@@ -102,6 +102,12 @@ endforeach()
 
 add_library(coreVerilog OBJECT ${gen_SRC})
 
+# the generated device models are large expression trees; at -O3
+# (the -O4 release default) compiling them is dramatically slower,
+# in particular with clang on AArch64; -O2 is plenty for these
+# auxiliary models
+set_property(TARGET coreVerilog APPEND PROPERTY COMPILE_OPTIONS -O2)
+
 # Distribute XML scripts
 set(XML_DIST ${XML_BUILD} qucsMODULEgui.xml qucsMODULEguiJSONsymbol.xml)
 
