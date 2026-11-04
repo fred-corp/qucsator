@@ -53,8 +53,10 @@ jobs:
           perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
           # drop the CMP0048 OLD policy block (rejected by CMake >= 4)
           perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
+          # -std=gnu17: ADMS uses K&R style prototypes ('int f();') which
+          # C23 compilers (GCC 15+ default) treat as 'int f(void)'
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
-                -DCMAKE_C_FLAGS=-fsigned-char \
+                -DCMAKE_C_FLAGS="-fsigned-char -std=gnu17" \
                 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build build --parallel
           cmake --install build

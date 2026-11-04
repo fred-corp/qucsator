@@ -39,6 +39,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fsigned-char)
 endif()
 
+# libqucsator is a shared library; the aarch64 linker rejects object
+# files compiled without position independent code
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 
 # otherwise qucsator cannot generate qucsdefs.h
 add_definitions(-DDEBUG)
