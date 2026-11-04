@@ -72,7 +72,39 @@ suite on your hardware.
 
 ## macOS jobs on your hardware instead
 
-To also run the macOS legs on your Mac, install the runner natively
-(not in Docker) per https://docs.github.com/en/actions/hosting-your-own-runners/
-with a `macos` label, and change the `macos-arm64` matrix entry in
-`.github/workflows/build.yml` to `runs-on: [self-hosted, macos]`.
+macOS jobs cannot run inside Docker (Linux containers only), so the
+macOS leg uses a *native* runner installed directly on the Mac:
+
+1. On the repository go to *Settings > Actions > Runners > New
+   self-hosted runner*, select **macOS / ARM64**.  GitHub shows a
+   registration token.
+
+2. On the Mac:
+
+   ```sh
+   mkdir -p ~/actions-runner && cd ~/actions-runner
+   curl -o actions.tar.gz -L https://github.com/actions/runner/releases/download/v2.327.1/actions-runner-osx-arm64-2.327.1.tar.gz
+   tar xzf actions.tar.gz
+   ./config.sh --url https://github.com/fred-corp/qucsator --token <TOKEN> \
+       --labels self-hosted,macOS,arm64 --name m4max-macos
+   ```
+   (use the runner version and token GitHub shows you; never commit
+   the token anywhere)
+
+3. Install it as a launchd service so it survives reboots:
+
+   ```sh
+   ./svc.sh install
+   ./svc.sh start
+   ```
+
+   The service runs as your user; builds execute in your home
+   directory context.  Since this runner is not containerized,
+   workflow code runs directly on your Mac: keep the forked-PR
+   approval requirement described above, and consider stopping the
+   service (`./svc.sh stop`) when you do not need it.
+
+The `macos` job in `.github/workflows/build-selfhosted.yml` runs on
+this runner and uploads a native macOS ARM64 `qucsator` binary, which
+*is* a drop-in replacement for `qucsator_rf` in the Qucs-S
+application bundle.
