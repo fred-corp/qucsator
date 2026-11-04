@@ -25,10 +25,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
         run: |
+          # never route fork pull requests to self-hosted runners,
+          # even if the fork PR approval gate was passed
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+             && [ "${{ github.event.pull_request.head.repo.full_name || github.repository }}" != "fred-corp/qucsator" ]; then
+            fork_pr=yes
+          else
+            fork_pr=no
+          fi
           pick() {
             labels_json="$1"; fallback="$2"
             result="$fallback"
-            if [ -n "${GH_TOKEN:-}" ]; then
+            if [ "$fork_pr" = "no" ] && [ -n "${GH_TOKEN:-}" ]; then
               json=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
                 "https://api.github.com/repos/fred-corp/qucsator/actions/runners?per_page=100" 2>/dev/null || true)
               if [ -n "$json" ] && printf '%s' "$json" | jq -e --argjson need "$labels_json" \
