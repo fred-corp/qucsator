@@ -6,21 +6,63 @@ on:
   pull_request:
 
 jobs:
+  # Decide which runner each build leg uses: an online self-hosted
+  # runner with matching labels, or GitHub's hosted runners as
+  # fallback.  Requires the repository secret RUNNER_ADMIN_TOKEN (a
+  # personal access token with admin access); without it (e.g. in
+  # pull requests from forks, which never receive repository
+  # secrets) the hosted runners are always used.
+  choose-runners:
+    runs-on: ubuntu-latest
+    outputs:
+      linux-x86_64: ${{ steps.pick.outputs.linux-x86_64 }}
+      linux-arm64: ${{ steps.pick.outputs.linux-arm64 }}
+      macos-x86_64: ${{ steps.pick.outputs.macos-x86_64 }}
+      macos-arm64: ${{ steps.pick.outputs.macos-arm64 }}
+    steps:
+      - name: Prefer self-hosted runners, fall back to hosted
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+        run: |
+          pick() {
+            labels_json="$1"; fallback="$2"
+            result="$fallback"
+            if [ -n "${GH_TOKEN:-}" ]; then
+              json=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/repos/fred-corp/qucsator/actions/runners?per_page=100" 2>/dev/null || true)
+              if [ -n "$json" ] && printf '%s' "$json" | jq -e --argjson need "$labels_json" \
+                  '[.runners[] | select(.status == "online") | [.labels[].name]]
+                   | map(select(. as $l | (($need - $l) | length) == 0))
+                   | length > 0' >/dev/null 2>&1; then
+                result="$labels_json"
+              fi
+            fi
+            echo "$result"
+          }
+          {
+            echo "linux-x86_64=\"ubuntu-latest\""
+            echo "linux-arm64=$(pick '["self-hosted","linux","arm64"]' '"ubuntu-24.04-arm"')"
+            echo "macos-x86_64=\"macos-15-intel\""
+            echo "macos-arm64=$(pick '["self-hosted","macOS","arm64"]' '"macos-latest"')"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: choose-runners
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
-            os: ubuntu-latest
+            pick: linux-x86_64
           - name: linux-arm64
-            os: ubuntu-24.04-arm
+            pick: linux-arm64
           - name: macos-x86_64
-            os: macos-15-intel
+            pick: macos-x86_64
           - name: macos-arm64
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+            pick: macos-arm64
+    runs-on: ${{ fromJson(needs.choose-runners.outputs[matrix.pick]) }}
 
     steps:
       - uses: actions/checkout@v4

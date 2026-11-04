@@ -52,13 +52,29 @@ Before starting the runner:
 4. In Docker Desktop, give the VM enough resources (e.g. 12-16 CPUs,
    24 GB RAM) under *Settings > Resources*.
 
+## Automatic self-hosted with hosted fallback
+
+The main build workflow prefers your self-hosted runners when they
+are online and falls back to GitHub's hosted runners when they are
+not (for example when the Mac is asleep).  This requires the
+repository secret `RUNNER_ADMIN_TOKEN`:
+
+1. Create a classic personal access token with the `repo` scope
+   (the same token used for the Docker runner works).
+2. Add it under *Settings > Secrets and variables > Actions > New
+   repository secret* as `RUNNER_ADMIN_TOKEN`.
+
+Without the secret the build always uses GitHub's hosted runners.
+Pull requests from forks never receive repository secrets, so they
+always use the hosted runners as well.
+
 ## Usage
 
 The workflow `.github/workflows/build-selfhosted.yml` builds the
-project on this runner.  It is triggered manually (*Actions > Build
-(self-hosted) > Run workflow*) so that pull request checks on GitHub's
-hosted runners are never blocked while the Mac is asleep.  Start it
-whenever you want a fast native build:
+project explicitly on this runner.  It is triggered manually
+(*Actions > Build (self-hosted) > Run workflow*) so that pull request
+checks on GitHub's hosted runners are never blocked while the Mac is
+asleep.  Start it whenever you want a fast native build:
 
 ```sh
 gh workflow run build-selfhosted.yml --repo fred-corp/qucsator \
