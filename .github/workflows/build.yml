@@ -1,0 +1,155 @@
+name: Build
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+
+jobs:
+  # Decide which runner each build leg uses: an online self-hosted
+  # runner with matching labels, or GitHub's hosted runners as
+  # fallback.  Requires the repository secret RUNNER_ADMIN_TOKEN (a
+  # personal access token with admin access); without it (e.g. in
+  # pull requests from forks, which never receive repository
+  # secrets) the hosted runners are always used.
+  choose-runners:
+    runs-on: ubuntu-latest
+    outputs:
+      linux-x86_64: ${{ steps.pick.outputs.linux-x86_64 }}
+      linux-arm64: ${{ steps.pick.outputs.linux-arm64 }}
+      macos-x86_64: ${{ steps.pick.outputs.macos-x86_64 }}
+      macos-arm64: ${{ steps.pick.outputs.macos-arm64 }}
+    steps:
+      - name: Prefer self-hosted runners, fall back to hosted
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+        run: |
+          pick() {
+            labels_json="$1"; fallback="$2"
+            result="$fallback"
+            if [ -n "${GH_TOKEN:-}" ]; then
+              json=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
+                "https://api.github.com/repos/fred-corp/qucsator/actions/runners?per_page=100" 2>/dev/null || true)
+              if [ -n "$json" ] && printf '%s' "$json" | jq -e --argjson need "$labels_json" \
+                  '[.runners[] | select(.status == "online") | [.labels[].name]]
+                   | map(select(. as $l | (($need - $l) | length) == 0))
+                   | length > 0' >/dev/null 2>&1; then
+                result="$labels_json"
+              fi
+            fi
+            echo "$result"
+          }
+          {
+            echo "linux-x86_64=\"ubuntu-latest\""
+            echo "linux-arm64=$(pick '["self-hosted","linux","arm64"]' '"ubuntu-24.04-arm"')"
+            echo "macos-x86_64=\"macos-15-intel\""
+            echo "macos-arm64=$(pick '["self-hosted","macOS","arm64"]' '"macos-latest"')"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: choose-runners
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            pick: linux-x86_64
+          - name: linux-arm64
+            pick: linux-arm64
+          - name: macos-x86_64
+            pick: macos-x86_64
+          - name: macos-arm64
+            pick: macos-arm64
+    runs-on: ${{ fromJson(needs.choose-runners.outputs[matrix.pick]) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bison flex gperf libxml-libxml-perl
+
+      - name: Cache macOS perl modules
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: ~/perl5
+          key: perl5-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          brew install bison flex gperf cpanminus
+          export PERL5LIB="$HOME/perl5/lib/perl5"
+          if ! perl -MXML::LibXML -e 'print "ok\n"' >/dev/null 2>&1; then
+            cpanm --local-lib="$HOME/perl5" XML::LibXML
+          fi
+
+      - name: Build ADMS (admsXml)
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # needed in this step and in the following ones
+            export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+            export PERL5LIB="$HOME/perl5/lib/perl5"
+            echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+            echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+            echo "PERL5LIB=$HOME/perl5/lib/perl5" >> "$GITHUB_ENV"
+          fi
+          git clone --depth 1 https://github.com/Qucs/ADMS.git
+          cd ADMS
+          # compatibility with recent bison (%name-prefix requires '=') and CMake
+          perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
+          # drop the CMP0048 OLD policy block (rejected by CMake >= 4)
+          perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
+          # -std=gnu17: ADMS uses K&R style prototypes ('int f();') which
+          # C23 compilers (GCC 15+ default) treat as 'int f(void)'
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
+                -DCMAKE_C_FLAGS="-fsigned-char -std=gnu17" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build build --parallel
+          cmake --install build
+          test -x "$HOME/adms/bin/admsXml"
+          echo "$HOME/adms/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build qucsator
+        run: |
+          EXTRA_ARGS=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # the bison/flex lookups in CMakeLists.txt search fixed paths
+            # only, so Homebrew's tools must be passed explicitly
+            EXTRA_ARGS="-DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison \
+                        -DFLEX_EXECUTABLE=$(brew --prefix flex)/bin/flex"
+          fi
+          # shellcheck disable=SC2086
+          cmake -B build -DCMAKE_BUILD_TYPE=Release $EXTRA_ARGS
+          cmake --build build --parallel
+
+      - name: Smoke test (complex impedance power source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="49+j24" Num=1\nR:R1 a gnd R=50\n.SP:SP1 Type="lin" Start=1e9 Stop=1.1e9 Points=2\n' > complex_sp.txt
+          build/src/qucsator -i complex_sp.txt -o complex_sp.dat
+          # expected power-wave S[1,1] for Z0=49+j24, load 50 Ohm
+          python3 contrib/ci/check_s11.py complex_sp.dat
+
+      - name: Smoke test (conjugate matched complex source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="1+j159.155" Num=1\nR:R1 a b R=1\nC:C1 b gnd C="1pF"\n.SP:SP1 Type="lin" Start=1e9 Stop=1e9 Points=2\n' > conjmatch.txt
+          build/src/qucsator -i conjmatch.txt -o conjmatch.dat
+          python3 contrib/ci/check_conj_match.py conjmatch.dat
+
+      - name: Run basic netlist tests
+        run: |
+          for f in $(find tests/basic -name '*.net' ! -path '*spfile*'); do
+            echo "== $f"
+            build/src/qucsator -i "$f" -o /tmp/qucsator-test.dat
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qucsator-${{ matrix.name }}
+          path: build/src/qucsator

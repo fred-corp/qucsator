@@ -1,0 +1,132 @@
+name: Build (self-hosted)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macos-arm64-selfhosted
+    # native macOS runner (install per contrib/ci/self-hosted-runner/README.md)
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          brew install bison flex gperf cpanminus
+          export PERL5LIB="$HOME/perl5/lib/perl5"
+          if ! perl -MXML::LibXML -e 'print "ok\n"' >/dev/null 2>&1; then
+            cpanm --local-lib="$HOME/perl5" XML::LibXML
+          fi
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          echo "PERL5LIB=$HOME/perl5/lib/perl5" >> "$GITHUB_ENV"
+
+      - name: Build ADMS (admsXml)
+        run: |
+          git clone --depth 1 https://github.com/Qucs/ADMS.git
+          cd ADMS
+          perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
+          perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build build --parallel
+          cmake --install build
+          test -x "$HOME/adms/bin/admsXml"
+          echo "$HOME/adms/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build qucsator
+        run: |
+          # the bison/flex lookups in CMakeLists.txt search fixed paths
+          # only, so Homebrew's tools must be passed explicitly
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+                -DBISON_EXECUTABLE=$(brew --prefix bison)/bin/bison \
+                -DFLEX_EXECUTABLE=$(brew --prefix flex)/bin/flex
+          cmake --build build --parallel
+
+      - name: Smoke test (complex impedance power source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="49+j24" Num=1\nR:R1 a gnd R=50\n.SP:SP1 Type="lin" Start=1e9 Stop=1.1e9 Points=2\n' > complex_sp.txt
+          build/src/qucsator -i complex_sp.txt -o complex_sp.dat
+          python3 contrib/ci/check_s11.py complex_sp.dat
+
+      - name: Smoke test (conjugate matched complex source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="1+j159.155" Num=1\nR:R1 a b R=1\nC:C1 b gnd C="1pF"\n.SP:SP1 Type="lin" Start=1e9 Stop=1e9 Points=2\n' > conjmatch.txt
+          build/src/qucsator -i conjmatch.txt -o conjmatch.dat
+          python3 contrib/ci/check_conj_match.py conjmatch.dat
+
+      - name: Run basic netlist tests
+        run: |
+          for f in $(find tests/basic -name '*.net' ! -path '*spfile*'); do
+            echo "== $f"
+            build/src/qucsator -i "$f" -o /tmp/qucsator-test.dat
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qucsator-macos-arm64-selfhosted
+          path: build/src/qucsator
+
+  build:
+    name: linux-arm64-m4max
+    runs-on: [self-hosted, m4max]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bison flex gperf libxml-libxml-perl
+
+      - name: Build ADMS (admsXml)
+        run: |
+          git clone --depth 1 https://github.com/Qucs/ADMS.git
+          cd ADMS
+          # compatibility with recent bison (%name-prefix requires '=') and CMake
+          perl -pi -e 's/%name-prefix "/%name-prefix="/g' admsXml/preprocessorYacc.y admsXml/verilogaYacc.y.in admsXml/mkelements.pl
+          # drop the CMP0048 OLD policy block (rejected by CMake >= 4)
+          perl -0pi -e 's/if\(POLICY CMP0048\).*?endif\(\)\s*\n?//s' CMakeLists.txt
+          # -std=gnu17: ADMS uses K&R style prototypes ('int f();') which
+          # C23 compilers (GCC 15+ default) treat as 'int f(void)'
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/adms" \
+                -DCMAKE_C_FLAGS="-fsigned-char -std=gnu17" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build build --parallel
+          cmake --install build
+          test -x "$HOME/adms/bin/admsXml"
+          echo "$HOME/adms/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build qucsator
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Smoke test (complex impedance power source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="49+j24" Num=1\nR:R1 a gnd R=50\n.SP:SP1 Type="lin" Start=1e9 Stop=1.1e9 Points=2\n' > complex_sp.txt
+          build/src/qucsator -i complex_sp.txt -o complex_sp.dat
+          python3 contrib/ci/check_s11.py complex_sp.dat
+
+      - name: Smoke test (conjugate matched complex source)
+        run: |
+          printf 'Pac:P1 a gnd P=0.001 f=1e9 Z="1+j159.155" Num=1\nR:R1 a b R=1\nC:C1 b gnd C="1pF"\n.SP:SP1 Type="lin" Start=1e9 Stop=1e9 Points=2\n' > conjmatch.txt
+          build/src/qucsator -i conjmatch.txt -o conjmatch.dat
+          python3 contrib/ci/check_conj_match.py conjmatch.dat
+
+      - name: Run basic netlist tests
+        run: |
+          for f in $(find tests/basic -name '*.net' ! -path '*spfile*'); do
+            echo "== $f"
+            build/src/qucsator -i "$f" -o /tmp/qucsator-test.dat
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qucsator-linux-arm64-m4max
+          path: build/src/qucsator

@@ -29,13 +29,19 @@
 
 # ~~~
 
+cmake_minimum_required(VERSION 3.5)
 project(qucs-core CXX)
-cmake_minimum_required(VERSION 2.6)
 
-# ignore the project() managed VERSION (new in CMake 3.0)
-if(POLICY CMP0048)
-  cmake_policy(SET CMP0048 OLD)
-endif(POLICY CMP0048)
+# keep char signed on platforms where the compiler defaults to
+# unsigned char (e.g. Linux on ARM), matching the behavior on the
+# other platforms
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-fsigned-char)
+endif()
+
+# libqucsator is a shared library; the aarch64 linker rejects object
+# files compiled without position independent code
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
 # otherwise qucsator cannot generate qucsdefs.h
